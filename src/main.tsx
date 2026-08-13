@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./large-responsive.css";
@@ -57,8 +57,10 @@ function App(){
   const [authResolved,setAuthResolved] = useState(false);
   const [syncState,setSyncState] = useState("Saved on this device");
   const [selected,setSelected] = useState<string[]>([]);
+  const localChangeReady=useRef(false);
   useEffect(()=>localStorage.setItem("petal-tasks",JSON.stringify(tasks)),[tasks]);
   useEffect(()=>localStorage.setItem("petal-projects",JSON.stringify(projectInfo)),[projectInfo]);
+  useEffect(()=>{if(!localChangeReady.current){localChangeReady.current=true;return}localStorage.setItem("petal-local-updated-at",String(Date.now()))},[tasks,projectInfo]);
   useEffect(()=>{
     if(!window.firebase){setSyncState("Could not connect to sign in");setAuthResolved(true);return}
     if(!window.firebase.apps.length) window.firebase.initializeApp(firebaseConfig);
@@ -68,13 +70,13 @@ function App(){
     return auth.onAuthStateChanged(async(current:any)=>{
       setAuthResolved(true);
       setUser(current); setCloudReady(false);
-      if(!current){if(hadAuthenticatedUser){setTasks(seed);setProjectInfo(initialProjectInfo)}setSyncState("Saved on this device");return}
+      if(!current){setSyncState("Saved safely on this device");return}
       hadAuthenticatedUser=true;
       setSyncState("Loading your cloud tasks…");
       try{
         const ref=db.collection("users").doc(current.uid).collection("data").doc("tracker");
         const snap=await ref.get();
-        if(snap.exists){const data=snap.data();if(Array.isArray(data.tasks))setTasks(data.tasks);if(Array.isArray(data.projects))setProjectInfo(data.projects)}
+        if(snap.exists){const data=snap.data(),localUpdated=Number(localStorage.getItem("petal-local-updated-at")||0),cloudUpdated=data.updatedAt?.toMillis?.()||0,localTasks=JSON.parse(localStorage.getItem("petal-tasks")||"[]"),localProjects=JSON.parse(localStorage.getItem("petal-projects")||"[]");if(localUpdated>cloudUpdated&&localTasks.length){setTasks(localTasks);if(localProjects.length)setProjectInfo(localProjects);setSyncState("Restoring your newest tasks…")}else{if(Array.isArray(data.tasks))setTasks(data.tasks);if(Array.isArray(data.projects))setProjectInfo(data.projects);localStorage.setItem("petal-local-updated-at",String(cloudUpdated))}}
         else {const localTasks=JSON.parse(localStorage.getItem("petal-tasks")||"[]");const localProjects=JSON.parse(localStorage.getItem("petal-projects")||"[]");await ref.set({tasks:localTasks.length?localTasks:seed,projects:localProjects.length?localProjects:initialProjectInfo,updatedAt:window.firebase.firestore.FieldValue.serverTimestamp()})}
         setCloudReady(true);setSyncState("Synced across your devices");
       }catch(e){console.error(e);setSyncState("Cloud setup needed — saved locally")}
